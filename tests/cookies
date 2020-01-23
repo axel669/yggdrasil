@@ -1,0 +1,3 @@
+#!/usr/bin/bash
+
+curl -v 'localhost:1337?a=b&c=d' --cookie 'wat=woah' | json
