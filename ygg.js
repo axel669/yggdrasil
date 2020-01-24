@@ -3,6 +3,15 @@ const url = require("url")
 
 const _cookie = require("cookie")
 
+const readFile = async fileaName => {
+    try {
+        return await fs.readFile(fileName)
+    }
+    catch (err) {
+        return null
+    }
+}
+
 const Request = (path, bodyBuffer) => ({
     path,
     bodyBuffer,
@@ -179,8 +188,14 @@ const static = options => {
 
     return async (req, res) => {
         const target = path.resolve(`${dir}${req.path}`)
-        const info = await fs.stat(target)
-        console.log(info)
+        // const info = await fs.stat(target)
+        const fileContents = await readFile(target)
+        console.log(target)
+        console.log("file contents:", fileContents)
+        if (fileContents !== null) {
+            res.send(fileContents)
+        }
+        // console.log(info)
         // fs.stat(target, (err, stat) => {
         //     if (err) {
         //         console.log(err)
