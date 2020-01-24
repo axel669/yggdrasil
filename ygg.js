@@ -67,6 +67,7 @@ const Response = () => {
         JSON.stringify(data),
         "application/json"
     )
+    const sendHTML = html => send(html, "text/html")
 
     const cookie = (name, value) => {
         const cookieString = _cookie.serialize(name, value)
@@ -76,10 +77,13 @@ const Response = () => {
         self.headers.setCookie.push(cookieString)
     }
 
+    // const sendImage = (type, data) => send(data, type)
+
     addFuncs({
         status,
         send,
         sendJSON,
+        sendHTML,
         cookie,
     })
 
@@ -161,7 +165,30 @@ const bodyParser = {
 const cookieParserHandler = (req, res) => {
     // console.log(req.headers)
     // req.cookie = req.headers.cookie
-    req.cookie = _cookie.parse(req.headers.cookie)
+    req.cookie = _cookie.parse(req.headers.cookie || "")
+}
+
+const static = options => {
+    const fs = require("fs-extra")
+    const path = require("path")
+
+    const {
+        dir = "public",
+    } = options
+    const sourceDir = path.resolve(dir)
+
+    return async (req, res) => {
+        const target = path.resolve(`${dir}${req.path}`)
+        const info = await fs.stat(target)
+        console.log(info)
+        // fs.stat(target, (err, stat) => {
+        //     if (err) {
+        //         console.log(err)
+        //         return
+        //     }
+        //     console.log(stat.isDirectory())
+        // })
+    }
 }
 
 const camelToHeader = name =>
@@ -211,6 +238,9 @@ const nodeHandler = (req, res) => {
                     bodyParserHandler,
                     corsHandler(),
                     cookieParserHandler,
+                    static({
+                        dir: ".",
+                    }),
                     (req, res) => {
                         // console.log(req)
                         res.cookie("test", "thing")
