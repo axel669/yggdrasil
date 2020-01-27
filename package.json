@@ -11,6 +11,10 @@
   "dependencies": {
     "cookie": "^0.4.0",
     "fs-extra": "^8.1.0",
+    "mime-types": "^2.1.26",
     "nodemon": "^2.0.2"
+  },
+  "devDependencies": {
+    "node-fetch": "^2.6.0"
   }
 }

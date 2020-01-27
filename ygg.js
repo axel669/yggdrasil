@@ -1,13 +1,22 @@
 const http = require("http")
 const url = require("url")
+const fs = require("fs-extra")
 
 const _cookie = require("cookie")
+const mime = require("mime-types")
 
-const readFile = async fileaName => {
+const readFile = async (fileName, method) => {
     try {
-        return await fs.readFile(fileName)
+        await fs.access(fileName, fs.constants.R_OK)
+        if (method === "GET" || method === "POST") {
+            return await fs.readFile(fileName)
+        }
+        if (method === "PUT") {
+        }
+        return ""
     }
     catch (err) {
+        console.log(err)
         return null
     }
 }
@@ -77,6 +86,15 @@ const Response = () => {
         "application/json"
     )
     const sendHTML = html => send(html, "text/html")
+    const sendFile = (name, type) => {
+        const fileContents = readFile(name, "GET")
+        const mimeType = (
+            type
+            || mime.lookup(name)
+            || "application/octet-stream"
+        )
+        send(fileContents, mimeType)
+    }
 
     const cookie = (name, value) => {
         const cookieString = _cookie.serialize(name, value)
@@ -93,6 +111,7 @@ const Response = () => {
         send,
         sendJSON,
         sendHTML,
+        sendFile,
         cookie,
     })
 
@@ -172,8 +191,6 @@ const bodyParser = {
 }
 
 const cookieParserHandler = (req, res) => {
-    // console.log(req.headers)
-    // req.cookie = req.headers.cookie
     req.cookie = _cookie.parse(req.headers.cookie || "")
 }
 
@@ -188,21 +205,31 @@ const static = options => {
 
     return async (req, res) => {
         const target = path.resolve(`${dir}${req.path}`)
-        // const info = await fs.stat(target)
-        const fileContents = await readFile(target)
-        console.log(target)
-        console.log("file contents:", fileContents)
+        const fileContents = await readFile(target, req.method)
+        const mimeType = mime.lookup(target) || "application/octet-stream"
         if (fileContents !== null) {
-            res.send(fileContents)
+            res.send(
+                fileContents,
+                mimeType
+            )
         }
-        // console.log(info)
-        // fs.stat(target, (err, stat) => {
-        //     if (err) {
-        //         console.log(err)
-        //         return
-        //     }
-        //     console.log(stat.isDirectory())
-        // })
+    }
+}
+
+const routeGroup = () => {
+    const routes = []
+
+    return {
+        addRoute: (path, handler) => {
+            routes.push([path, handler])
+        },
+        handler: async (req, res) => {
+            for (const [path, handler] of routes) {
+                if (req.path === path) {
+                    return await handler(req, res)
+                }
+            }
+        }
     }
 }
 
@@ -210,6 +237,26 @@ const camelToHeader = name =>
     name
         .replace(/[A-Z]/g, (s) => `-${s}`)
         .replace(/^\w/, s => s.toUpperCase())
+const notFoundHandler = (req, res) => {
+    res.status(404)
+        .send("Not Found")
+}
+
+const todoApp = routeGroup()
+
+todoApp.addRoute(
+    "/test",
+    (req, res) => {
+        res.sendJSON("found?")
+    }
+)
+todoApp.addRoute(
+    "/test-file",
+    (req, res) => {
+        res.sendFile("package.json")
+    }
+)
+
 const nodeHandler = (req, res) => {
     const rawBody = []
     req.on(
@@ -221,26 +268,6 @@ const nodeHandler = (req, res) => {
     req.on(
         "end",
         async () => {
-            // console.log(req.url)
-            // const requestURL = new URL(req.url, "file://internal")
-
-            // const params = Array
-            //     .from(
-            //         requestURL.searchParams.keys()
-            //     )
-            //     .reduce(
-            //         (p, key) => {
-            //             const value = requestURL.searchParams.getAll(key)
-            //             p[key] = (value.length === 1) ? value[0] : value
-            //             return p
-            //         },
-            //         {}
-            //     )
-            // console.log(requestURL)
-            // console.log(requestURL.searchParams.entries())
-            // console.log(requestURL.searchParams.keys())
-            // console.log(requestURL.searchParams.getAll("test"))
-
             const bodyBuffer = (req.method === "GET")
                 ? null
                 : Buffer.concat(rawBody)
@@ -256,28 +283,31 @@ const nodeHandler = (req, res) => {
                     static({
                         dir: ".",
                     }),
+                    todoApp.handler,
                     (req, res) => {
-                        // console.log(req)
+                        if (req.method !== "POST") {
+                            return
+                        }
+                        console.log(res)
                         res.cookie("test", "thing")
                         res.cookie("test2", "thing")
                         res.sendJSON({
                             get: req.query,
                             post: req.body,
                         })
-                        // res.send("done")
-                    }
+                    },
+                    notFoundHandler,
                 ]
             )
             console.log(result)
-            // res.setHeader("contentType", "text/plain")
             for (const [name, value] of Object.entries(result.headers)) {
                 res.setHeader(
                     camelToHeader(name),
                     value
                 )
             }
-            res.end(result.body)
-            // res.end(JSON.stringify(body))
+            res.statusCode = result.statusCode
+            res.end(await result.body)
         }
     )
 }
