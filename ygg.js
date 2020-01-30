@@ -16,8 +16,15 @@ const readFile = async (fileName, method) => {
         return ""
     }
     catch (err) {
-        console.log(err)
-        return null
+        const skipCode = (
+            err.code === "EISDIR"
+            || err.code === "ENOENT"
+        )
+
+        if (skipCode) {
+            return null
+        }
+        return err
     }
 }
 
@@ -30,6 +37,7 @@ const NodeRequest = (source, bodyBuffer) => {
     const requestURL = new URL(source.url, "file://internal")
     const req = Request(requestURL.pathname, bodyBuffer)
 
+    req._raw = source
     req.method = source.method
     req.headers = {}
     for (const header of Object.keys(source.headers)) {
@@ -56,7 +64,42 @@ const NodeRequest = (source, bodyBuffer) => {
     return req
 }
 
-const Response = () => {
+const modifySelf = (self, additions) => {
+    for (const addition of additions) {
+        for (const [key, value] of Object.entries(addition)) {
+            const selfValue = (typeof value !== "function")
+                ? value
+                : (...args) => {
+                    value(self, ...args)
+                    return self
+                }
+            self[key] = selfValue
+        }
+    }
+}
+
+const responseCore = {
+    status: (self, statusCode) => self.statusCode = statusCode,
+    send: (self, data, type = null) => {
+        self.body = data
+        if (type !== null) {
+            self.headers.contentType = type
+        }
+    },
+    sendJSON: (self, data) => send(
+        JSON.stringify(data),
+        "application/json"
+    ),
+    sendHTML: (self, html) => send(html, "text/html"),
+    cookie: (self, name, value, options) => {
+        const cookieString = _cookie.serialize(name, value, options)
+        if (self.headers.setCookie === undefined) {
+            self.headers.setCookie = []
+        }
+        self.headers.setCookie.push(cookieString)
+    },
+}
+const Response = (modifiers = []) => {
     const self = {
         headers: {
             contentType: "text/plain",
@@ -64,59 +107,78 @@ const Response = () => {
         statusCode: 200,
     }
 
-    const addFuncs = source => {
-        for (const [name, func] of Object.entries(source)) {
-            self[name] = (...args) => {
-                func(...args)
-                return self
-            }
-        }
-    }
-
-    const status = statusCode =>
-        self.statusCode = statusCode
-    const send = (data, type = null) => {
-        self.body = data
-        if (type !== null) {
-            self.headers.contentType = type
-        }
-    }
-    const sendJSON = (data) => send(
-        JSON.stringify(data),
-        "application/json"
+    modifySelf(
+        self,
+        [
+            responseCore,
+            ...modifiers,
+        ]
     )
-    const sendHTML = html => send(html, "text/html")
-    const sendFile = (name, type) => {
-        const fileContents = readFile(name, "GET")
-        const mimeType = (
-            type
-            || mime.lookup(name)
-            || "application/octet-stream"
-        )
-        send(fileContents, mimeType)
-    }
-
-    const cookie = (name, value) => {
-        const cookieString = _cookie.serialize(name, value)
-        if (self.headers.setCookie === undefined) {
-            self.headers.setCookie = []
-        }
-        self.headers.setCookie.push(cookieString)
-    }
-
-    // const sendImage = (type, data) => send(data, type)
-
-    addFuncs({
-        status,
-        send,
-        sendJSON,
-        sendHTML,
-        sendFile,
-        cookie,
-    })
 
     return self
 }
+
+// const Response = () => {
+//     const self = {
+//         headers: {
+//             contentType: "text/plain",
+//         },
+//         statusCode: 200,
+//     }
+
+//     const addFuncs = source => {
+//         for (const [name, func] of Object.entries(source)) {
+//             self[name] = (...args) => {
+//                 func(self, ...args)
+//                 return self
+//             }
+//         }
+//     }
+
+//     const status = statusCode =>
+//         self.statusCode = statusCode
+//     const send = (data, type = null) => {
+//         self.body = data
+//         if (type !== null) {
+//             self.headers.contentType = type
+//         }
+//     }
+//     const sendJSON = (data) => send(
+//         JSON.stringify(data),
+//         "application/json"
+//     )
+//     const sendHTML = html => send(html, "text/html")
+//     const sendFile = (name, type) => {
+//         const fileContents = readFile(name, "GET")
+//         const mimeType = (
+//             type
+//             || mime.lookup(name)
+//             || "application/octet-stream"
+//         )
+//         send(fileContents, mimeType)
+//     }
+
+//     const cookie = (name, value, options) => {
+//         const cookieString = _cookie.serialize(name, value, options)
+//         if (self.headers.setCookie === undefined) {
+//             self.headers.setCookie = []
+//         }
+//         self.headers.setCookie.push(cookieString)
+//     }
+
+//     // const sendImage = (type, data) => send(data, type)
+
+//     addFuncs({
+//         status,
+//         send,
+//         sendJSON,
+//         sendHTML,
+//         sendFile,
+//         cookie,
+//     })
+
+//     return self
+// }
 
 const processHandlers = async (req, res, handlers) => {
     // const res = {}
@@ -128,34 +190,12 @@ const processHandlers = async (req, res, handlers) => {
     }
     return null
 }
-const nums = Array.from({length: 100}, (_, i) => i)
 const match = (req, path) => {
     if (req.path === path) {
         return true
     }
     return false
 }
-const handlers = [
-    (req, res) => {
-        res.headers = {}
-    },
-    (req, res) => {
-        res.headers.wat = "test"
-    },
-    // (req, res) => res,
-    (req, res) => {
-        res.send("hi")
-    },
-    // (req, res) => res,
-]
-const main = async () => {
-    const request = {
-        path: "/test",
-    }
-    const response = await processHandlers(request, Response(), handlers)
-    console.log(response)
-}
-// main()
 
 const corsHandler = (options = {}) => {
     const {
@@ -216,23 +256,6 @@ const static = options => {
     }
 }
 
-const routeGroup = () => {
-    const routes = []
-
-    return {
-        addRoute: (path, handler) => {
-            routes.push([path, handler])
-        },
-        handler: async (req, res) => {
-            for (const [path, handler] of routes) {
-                if (req.path === path) {
-                    return await handler(req, res)
-                }
-            }
-        }
-    }
-}
-
 const camelToHeader = name =>
     name
         .replace(/[A-Z]/g, (s) => `-${s}`)
@@ -242,76 +265,107 @@ const notFoundHandler = (req, res) => {
         .send("Not Found")
 }
 
-const todoApp = routeGroup()
-
-todoApp.addRoute(
-    "/test",
-    (req, res) => {
+const todoHandlers = {
+    test: (req, res) => {
         res.sendJSON("found?")
-    }
-)
-todoApp.addRoute(
-    "/test-file",
-    (req, res) => {
+    },
+    testFile: (req, res) => {
         res.sendFile("package.json")
-    }
-)
-
-const nodeHandler = (req, res) => {
-    const rawBody = []
-    req.on(
-        "data",
-        (data) => {
-            rawBody.push(data)
-        }
-    )
-    req.on(
-        "end",
-        async () => {
-            const bodyBuffer = (req.method === "GET")
-                ? null
-                : Buffer.concat(rawBody)
-            const nodeRequest = NodeRequest(req, bodyBuffer)
-            const nodeResponse = Response()
-            const result = await processHandlers(
-                nodeRequest,
-                nodeResponse,
-                [
-                    bodyParserHandler,
-                    corsHandler(),
-                    cookieParserHandler,
-                    static({
-                        dir: ".",
-                    }),
-                    todoApp.handler,
-                    (req, res) => {
-                        if (req.method !== "POST") {
-                            return
-                        }
-                        console.log(res)
-                        res.cookie("test", "thing")
-                        res.cookie("test2", "thing")
-                        res.sendJSON({
-                            get: req.query,
-                            post: req.body,
-                        })
-                    },
-                    notFoundHandler,
-                ]
-            )
-            console.log(result)
-            for (const [name, value] of Object.entries(result.headers)) {
-                res.setHeader(
-                    camelToHeader(name),
-                    value
-                )
-            }
-            res.statusCode = result.statusCode
-            res.end(await result.body)
-        }
-    )
+    },
 }
-const server = http.createServer(nodeHandler)
+
+const routeGroup = (...routes) => {
+    return async (req, res) => {
+        for (const [path, handler] of routes) {
+            if (req.path === path) {
+                return await handler(req, res)
+            }
+        }
+    }
+}
+
+const createApp = (...handlers) => {
+    const requestHandler = async (appRequest, nodeResponse) => {
+        const appResponse = Response()
+
+        const result = await processHandlers(
+            appRequest,
+            appResponse,
+            handlers
+        )
+
+        if (result.body instanceof Error) {
+            console.log(result.body)
+            nodeResponse.statusCode = 500
+            nodeResponse.end("SERVER BROKEN D:")
+            return
+        }
+
+        for (const [name, value] of Object.entries(result.headers)) {
+            nodeResponse.setHeader(
+                camelToHeader(name),
+                value
+            )
+        }
+
+        nodeResponse.statusCode = result.statusCode
+        nodeResponse.end(await result.body)
+    }
+    const nodeHandler = (req, res) => {
+        if (req.method === "GET") {
+            requestHandler(
+                NodeRequest(req, null),
+                res
+            )
+            return
+        }
+
+        const rawBody = []
+        req.on(
+            "data",
+            (data) => {
+                rawBody.push(data)
+            }
+        )
+        req.on(
+            "end",
+            () => {
+                const bodyBuffer = Buffer.concat(rawBody)
+                const appRequest = NodeRequest(req, bodyBuffer)
+                requestHandler(appRequest, res)
+            }
+        )
+    }
+    return nodeHandler
+}
+const server = http.createServer(
+    createApp(
+        bodyParserHandler,
+        corsHandler(),
+        cookieParserHandler,
+        static({
+            dir: ".",
+        }),
+        routeGroup(
+            ["/test", todoHandlers.test],
+            ["/test-file", todoHandlers.testFile],
+        ),
+        (req, res) => {
+            if (req.method !== "POST") {
+                return
+            }
+            console.log(res)
+            res.cookie("test", "thing")
+            res.cookie("test2", "thing")
+            res.cookie("test2", "second value lul", {httpOnly: true})
+            res.sendJSON({
+                get: req.query,
+                post: req.body,
+            })
+        },
+        notFoundHandler,
+    )
+)
 server.listen(
     1337,
     () => console.log("listening")
